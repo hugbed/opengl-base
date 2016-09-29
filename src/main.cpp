@@ -40,12 +40,6 @@ struct InputTracker {
 
 Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
 
-#ifdef _VR
-vr::IVRSystem* hmd = nullptr;
-#endif
-
-int main();
-
 // Function prototypes
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -55,13 +49,8 @@ void doMovement();
 int main() {
     std::cout << "Starting GLFW context, OpenGL 3.3" << std::endl;
 
-	uint32_t framebufferWidth = 1280, framebufferHeight = 720;
-
-	const int numEyes = 1;
-
 	GLFWwindow *window = nullptr;
-	const int windowHeight = 720;
-	const int windowWidth = (framebufferWidth * windowHeight) / framebufferHeight;
+	uint32_t windowWidth = 1280, windowHeight = 720;
     if (!GL::initWindow(windowWidth, windowHeight, window)) return -1;
     if (!GL::initGLEW()) return -1;
 	GL::initViewport(window);
@@ -71,14 +60,6 @@ int main() {
 	glfwSetKeyCallback(window, key_callback);
 	glfwSetCursorPosCallback(window, mouse_callback);
 	glfwSetScrollCallback(window, scroll_callback);
-
-	//////////////////////////////////////////////////////////////////////
-	// Allocate the frame buffer. This code allocates one framebuffer per eye.
-	// That requires more GPU memory, but is useful when performing temporal 
-	// filtering or making render calls that can target both simultaneously.
-	GLuint framebuffer[numEyes];
-	GLuint colorRenderTarget[numEyes], depthRenderTarget[numEyes];
-	GL::initFrameBuffersAndTextures(numEyes, framebufferWidth, framebufferHeight, framebuffer, colorRenderTarget, depthRenderTarget);
 
 	/////////////////////////////////////////////////////////////////
 	// Load vertex array buffers
@@ -127,72 +108,30 @@ int main() {
 
 		/////////////////////////////////////////////////////////////////////
 		// Update transforms
-		glm::mat4 projection[numEyes], headToEye[numEyes], bodyToHead;
+		glm::mat4 projection = glm::perspective(verticalFieldOfView, (float)windowWidth / (float)windowHeight, -nearPlaneZ, -farPlaneZ);
 
-		projection[0] = glm::perspective(verticalFieldOfView, (float)framebufferWidth / (float)framebufferHeight, -nearPlaneZ, -farPlaneZ);
+		// Clear the colorbuffer
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		const glm::mat4 view = camera.GetViewMatrix();
+
+		shader.use();
 
 		/////////////////////////////////////////////////////////////////////
-		// Draw each eye on framebuffer texture
-		for (int eye = 0; eye < numEyes; ++eye) {
-			glBindFramebuffer(GL_FRAMEBUFFER, framebuffer[eye]);
-			glViewport(0, 0, framebufferWidth, framebufferHeight);
+		// Assign uniforms (View, projection)
+		GLint viewLoc = glGetUniformLocation(shader.program, "view");
+		GLint projectionLoc = glGetUniformLocation(shader.program, "projection");
+		glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
+		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
-			// Clear the colorbuffer
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		/////////////////////////////////////////////////////////////////////
+		// Draw triangles
+		glm::mat4 model;
+		model = glm::rotate(glm::mat4(), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		GLint modelLoc = glGetUniformLocation(shader.program, "model");
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-			const glm::mat4 view = camera.GetViewMatrix();
-
-			shader.use();
-
-			/////////////////////////////////////////////////////////////////////
-			// Assign uniforms
-
-			// View, projection
-			GLint viewLoc = glGetUniformLocation(shader.program, "view");
-			GLint projectionLoc = glGetUniformLocation(shader.program, "projection");
-			glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection[eye]));
-			glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-
-			// Point size
-			int viewport[4];
-			glGetIntegerv(GL_VIEWPORT, viewport);
-			GLint pointSizeLoc = glGetUniformLocation(shader.program, "pointSize");
-			glUniform1f(pointSizeLoc, 0.005f);
-
-			// Height of near plane
-			float heightOfNearPlane = (float)abs(viewport[3] - viewport[1]) / (2 * (float)tan(0.5*camera.Zoom*PI / 180.0));
-			GLint heightOfNearPlaneLoc = glGetUniformLocation(shader.program, "heightOfNearPlane");
-			glUniform1f(heightOfNearPlaneLoc, heightOfNearPlane);
-
-			/////////////////////////////////////////////////////////////////////
-			// Draw triangles
-			glm::mat4 model;
-			model = glm::rotate(glm::mat4(), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-			GLint modelLoc = glGetUniformLocation(shader.program, "model");
-			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-
-			mesh.Draw(shader);
-
-			//for(GLuint i = 0; i < 10; i++)
-			//{
-			//	model = glm::translate(model, trianglePositions[i]);
-			//	GLfloat angle = 20.0f * i;
-			//	model = glm::rotate(model, angle, glm::vec3(1.0f, 0.3f, 0.5f));
-			//	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-			//	glPointSize(10.0f);
-			//	currentMesh.Draw(shader);
-			//}
-
-		} // for each eye
-
-		////////////////////////////////////////////////////////////////////////
-
-		// Mirror to the window
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GL_NONE);
-		glViewport(0, 0, windowWidth, windowHeight);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		glBlitFramebuffer(0, 0, framebufferWidth, framebufferHeight, 0, 0, windowWidth, windowHeight, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, GL_NONE);
+		mesh.Draw(shader);
 
         // Swap the screen buffers
         glfwSwapBuffers(window);
