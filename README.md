@@ -1,4 +1,4 @@
-Rendering stuff
+Basic CMake OpenGL Project
 
 On Windows, these environment variables should be set :
 * GLM root directory must be : GLM_ROOT_DIR
